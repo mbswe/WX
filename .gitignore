@@ -1,4 +1,5 @@
 /target
 locations.toml
+locations.csv
 Cargo.lock
 .vscode
