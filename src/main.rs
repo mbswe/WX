@@ -2,8 +2,7 @@ use std::{env, process::exit, io::Write};
 use chrono::{DateTime, NaiveDateTime, Local, TimeZone};
 use reqwest::{Error, header::USER_AGENT};
 mod structs;
-use structs::WeatherData;
-use toml::Table;
+use structs::{WeatherData, Location};
 use std::str::FromStr;
 
 
@@ -19,24 +18,32 @@ async fn main() {
          */
         let locations = get_locations_config();
         
-        for item in locations.iter() {
-            println!("{}", item.0);
+        for location in locations.iter() {
+            println!("{}", location.name);
         }
     } else if args.len() == 2 {
         /*
         Fetch weather data for the given location
          */
-        let locations: toml::map::Map<String, toml::Value> = get_locations_config();
-        let location = locations.get(&args[1]).unwrap();
-
-        let lat = location.get("latitude").unwrap().to_string().parse::<f64>().unwrap();
-        let lng = location.get("longitude").unwrap().to_string().parse::<f64>().unwrap();
-
-        println!("Fetching weather data for {} (latitude: {}, longitude: {})", &args[1], lat, lng);
+        let locations = get_locations_config();
+        let location = locations.iter().find(|loc| loc.name == args[1]);
         
-        let weather_data = fetch_weather_data(lat, lng).await;
+        match location {
+            Some(loc) => {
+                let lat = loc.latitude;
+                let lng = loc.longitude;
 
-        pretty_print_weather_data(weather_data.unwrap());
+                println!("Fetching weather data for {} (latitude: {}, longitude: {})", &args[1], lat, lng);
+                
+                let weather_data = fetch_weather_data(lat, lng).await;
+
+                pretty_print_weather_data(weather_data.unwrap());
+            }
+            None => {
+                println!("Location '{}' not found in configuration", &args[1]);
+                exit(1);
+            }
+        }
     } else if args.len() > 3 {
         /*
         Too many arguments
@@ -73,28 +80,38 @@ fn create_locations_config(path: &std::path::Path) {
         Err(e) => panic!("{}", e),
     };
 
-    let mut locations = "\"Effectsoft Göteborg\" = { latitude = 57.960308, longitude = 12.126554 }\n".to_string();
-    locations.push_str("\"Effectsoft Halmstad\" = { latitude = 56.676086, longitude = 12.858977 }\n");
+    let csv_content = "name,latitude,longitude\n";
+    let csv_content = format!("{}Effectsoft Göteborg,57.960308,12.126554\n", csv_content);
+    let csv_content = format!("{}Effectsoft Halmstad,56.676086,12.858977\n", csv_content);
 
-    match file.write_all(locations.as_bytes()) {
+    match file.write_all(csv_content.as_bytes()) {
         Ok(_) => println!("Created locations config file"),
         Err(e) => panic!("{}", e),
     };
 }
 
-fn get_locations_config() -> Table {
-    let path = std::path::Path::new("locations.toml");
+fn get_locations_config() -> Vec<Location> {
+    let path = std::path::Path::new("locations.csv");
 
-        if path.exists() == false {
-            create_locations_config(path);
-        }
+    if path.exists() == false {
+        create_locations_config(path);
+    }
 
-        let file = match std::fs::read_to_string(path) {
-            Ok(f) => f,
-            Err(e) => panic!("{}", e),
+    let file_content = match std::fs::read_to_string(path) {
+        Ok(f) => f,
+        Err(e) => panic!("{}", e),
+    };
+
+    let mut reader = csv::Reader::from_reader(file_content.as_bytes());
+    let mut locations = Vec::new();
+
+    for result in reader.deserialize() {
+        let location: Location = match result {
+            Ok(l) => l,
+            Err(e) => panic!("Error parsing CSV: {}", e),
         };
-
-        let locations: Table = file.parse().unwrap();
+        locations.push(location);
+    }
 
     return locations;
 }

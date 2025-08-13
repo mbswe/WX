@@ -2,6 +2,13 @@ use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Deserialize, Serialize, Debug)]
+pub struct Location {
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct WeatherData {
     pub r#type: String,
     pub geometry: Geometry,
