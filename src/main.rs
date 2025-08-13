@@ -1,9 +1,8 @@
-use std::{env, process::exit, io::Write};
+use std::{env, process::exit, collections::HashMap};
 use chrono::{DateTime, NaiveDateTime, Local, TimeZone};
 use reqwest::{Error, header::USER_AGENT};
 mod structs;
-use structs::WeatherData;
-use toml::Table;
+use structs::{WeatherData, Location};
 use std::str::FromStr;
 
 
@@ -19,24 +18,29 @@ async fn main() {
          */
         let locations = get_locations_config();
         
-        for item in locations.iter() {
-            println!("{}", item.0);
+        for name in locations.keys() {
+            println!("{}", name);
         }
     } else if args.len() == 2 {
         /*
         Fetch weather data for the given location
          */
-        let locations: toml::map::Map<String, toml::Value> = get_locations_config();
-        let location = locations.get(&args[1]).unwrap();
-
-        let lat = location.get("latitude").unwrap().to_string().parse::<f64>().unwrap();
-        let lng = location.get("longitude").unwrap().to_string().parse::<f64>().unwrap();
-
-        println!("Fetching weather data for {} (latitude: {}, longitude: {})", &args[1], lat, lng);
+        let locations: HashMap<String, Location> = get_locations_config();
+        let location = locations.get(&args[1]);
         
-        let weather_data = fetch_weather_data(lat, lng).await;
+        match location {
+            Some(loc) => {
+                println!("Fetching weather data for {} (latitude: {}, longitude: {})", &args[1], loc.latitude, loc.longitude);
+                
+                let weather_data = fetch_weather_data(loc.latitude, loc.longitude).await;
 
-        pretty_print_weather_data(weather_data.unwrap());
+                pretty_print_weather_data(weather_data.unwrap());
+            }
+            None => {
+                println!("Location '{}' not found in config", &args[1]);
+                exit(1);
+            }
+        }
     } else if args.len() > 3 {
         /*
         Too many arguments
@@ -68,35 +72,40 @@ async fn main() {
 }
 
 fn create_locations_config(path: &std::path::Path) {
-    let mut file = match std::fs::File::create(path) {
-        Ok(f) => f,
-        Err(e) => panic!("{}", e),
-    };
-
-    let mut locations = "\"Effectsoft Göteborg\" = { latitude = 57.960308, longitude = 12.126554 }\n".to_string();
-    locations.push_str("\"Effectsoft Halmstad\" = { latitude = 56.676086, longitude = 12.858977 }\n");
-
-    match file.write_all(locations.as_bytes()) {
-        Ok(_) => println!("Created locations config file"),
-        Err(e) => panic!("{}", e),
-    };
+    let mut wtr = csv::Writer::from_path(path).expect("Could not create CSV writer");
+    
+    // Write header
+    wtr.write_record(&["name", "latitude", "longitude"])
+        .expect("Could not write CSV header");
+    
+    // Write default locations
+    wtr.write_record(&["Effectsoft Göteborg", "57.960308", "12.126554"])
+        .expect("Could not write location record");
+    wtr.write_record(&["Effectsoft Halmstad", "56.676086", "12.858977"])
+        .expect("Could not write location record");
+    
+    wtr.flush().expect("Could not flush CSV writer");
+    println!("Created locations config file");
 }
 
-fn get_locations_config() -> Table {
-    let path = std::path::Path::new("locations.toml");
+fn get_locations_config() -> HashMap<String, Location> {
+    let path = std::path::Path::new("locations.csv");
 
-        if path.exists() == false {
-            create_locations_config(path);
-        }
+    if !path.exists() {
+        create_locations_config(path);
+    }
 
-        let file = match std::fs::read_to_string(path) {
-            Ok(f) => f,
-            Err(e) => panic!("{}", e),
-        };
+    let mut rdr = csv::Reader::from_path(path)
+        .expect("Could not create CSV reader");
+    
+    let mut locations = HashMap::new();
+    
+    for result in rdr.deserialize() {
+        let location: Location = result.expect("Could not parse location record");
+        locations.insert(location.name.clone(), location);
+    }
 
-        let locations: Table = file.parse().unwrap();
-
-    return locations;
+    locations
 }
 
 async fn fetch_weather_data(lat: f64, lng: f64) -> Result<WeatherData, Error> {
